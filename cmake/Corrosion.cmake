@@ -869,6 +869,36 @@ function(_add_cargo_build out_cargo_build_out_dir)
     )
     add_dependencies(cargo-build_${target_name} _cargo-build_${target_name})
 
+    add_test(NAME cargo-test-${target_name}
+    # Test crate
+    COMMAND
+        ${CMAKE_COMMAND} -E env
+            "${build_env_variable_genex}"
+            "${global_rustflags_genex}"
+            "${cargo_target_linker}"
+            "${corrosion_cc_rs_flags}"
+            "${cargo_library_path}"
+            "CORROSION_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+            "CARGO_BUILD_RUSTC=${_CORROSION_RUSTC}"
+        "${cargo_bin}"
+            test 
+            ${target_name}
+            ${_CORROSION_VERBOSE_OUTPUT_FLAG}
+            ${all_features_arg}
+            ${no_default_features_arg}
+            ${features_genex}
+            --package ${package_name}
+            --manifest-path "${path_to_toml}"
+            --target-dir "${cargo_target_dir}"
+            ${cargo_profile}
+            ${flags_genex}
+            # Any arguments to cargo must be placed before this line
+            #${local_rustflags_delimiter}
+            #${local_rustflags_genex}
+            WORKING_DIRECTORY "${workspace_toml_dir}"
+      COMMAND_EXPAND_LISTS
+    )
+
     # Add custom target before actual build that user defined custom commands (e.g. code generators) can
     # use as a hook to do something before the build. This mainly exists to not expose the `_cargo-build` targets.
     add_custom_target(cargo-prebuild_${target_name})
