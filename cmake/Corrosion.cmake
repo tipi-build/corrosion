@@ -586,6 +586,8 @@ function(_add_cargo_build out_cargo_build_out_dir)
         set(cargo_rustc_filter "--lib")
     elseif("bin" IN_LIST target_kinds)
         set(cargo_rustc_filter "--bin=${target_name}")
+    elseif("test" IN_LIST target_kinds)
+        set(cargo_rustc_filter "--test=${target_name}")
     else()
         message(FATAL_ERROR "TARGET_KINDS contained unknown kind `${target_kind}`")
     endif()
@@ -808,7 +810,7 @@ function(_add_cargo_build out_cargo_build_out_dir)
     )
     add_dependencies(cargo-build_${target_name} _cargo-build_${target_name})
 
-    add_test(NAME cargo-test-${target_name}
+    add_test(NAME cargo-test_${target_name}
     # Test crate
     COMMAND
         ${CMAKE_COMMAND} -E env
@@ -820,8 +822,8 @@ function(_add_cargo_build out_cargo_build_out_dir)
             "CORROSION_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
             "CARGO_BUILD_RUSTC=${_CORROSION_RUSTC}"
         "${cargo_bin}"
-            test 
-            ${target_name}
+            test
+            ${cargo_rustc_filter}
             ${_CORROSION_VERBOSE_OUTPUT_FLAG}
             ${all_features_arg}
             ${no_default_features_arg}
