@@ -705,6 +705,47 @@ function(_add_cargo_build out_cargo_build_out_dir)
     if(CMAKE_CXX_COMPILER)
         list(APPEND corrosion_cc_rs_flags "CXX_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_COMPILER}")
     endif()
+
+    # Let CMake Drive via CXXFLAGS, CFLAGS and -Clink-args= the linking flags like -fPIC and others
+    list(APPEND corrosion_cc_rs_flags "CRATE_CC_NO_DEFAULTS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=ON")
+ 
+    # forward linker flags to allow use of custom linker and custom options
+    set (corrosion_link_args "${corrosion_link_args} ${CMAKE_EXE_LINKER_FLAGS}")
+
+    # treat CMAKE_POSITION_INDEPENDENT_CODE properly if set
+    if (NOT CMAKE_POSITION_INDEPENDENT_CODE)
+      list(APPEND corrosion_cc_rs_flags "CFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_C_FLAGS}")
+      list(APPEND corrosion_cc_rs_flags "CXXFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_FLAGS}")
+    else()
+      list(APPEND corrosion_cc_rs_flags "CFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_C_FLAGS} ${CMAKE_C_COMPILE_OPTIONS_PIC}")
+      list(APPEND corrosion_cc_rs_flags "CXXFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_COMPILE_OPTIONS_PIC}")
+      
+      # Linkage phase args ( rust uses the compiler as linker driver)
+      set (corrosion_link_args "${corrosion_link_args}  ${CMAKE_CXX_COMPILE_OPTIONS_PIC}")
+      if(("bin" IN_LIST target_kinds) OR ("test" IN_LIST target_kinds))
+        set (corrosion_link_args "${corrosion_link_args}  ${CMAKE_CXX_COMPILE_OPTIONS_PIE}")
+      endif()
+    endif()
+
+
+    # stdlib
+    string(REGEX MATCHALL "-stdlib=([^ ]+)" custom_stdlibs_matches "${CMAKE_CXX_FLAGS}")
+    list(POP_BACK custom_stdlibs_matches custom_stdlib_defined)
+    if (NOT custom_stdlib_defined STREQUAL "")
+      # For rustc to link the right cpp stdlib, we need to strip the lib prefix
+      string(REPLACE "-stdlib=lib" "" custom_stdlib_defined_value "${custom_stdlib_defined}")
+      # We need to set the CXXSTDLIB to empty, so that rust/cc-rs doesn't try to do smart things about C++
+      # It forces a dynamic linking of libc++ in the context of clang 13 otherwise.
+      list(APPEND corrosion_cc_rs_flags "CXXSTDLIB_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=")
+
+      # When using pure c++ cmake build we don't need to transmit the 
+      # stdlib to the CMAKE_EXE_LINKER_FLAGS for rust we need because
+      # the flags are given to the compiler, that is used to drive the linker.
+      set (corrosion_link_args "${corrosion_link_args} ${custom_stdlib_defined}")
+    endif()
+
+   
+
     # cc-rs doesn't seem to support `llvm-ar` (commandline syntax), wo we might as well just use
     # the default AR.
     if(CMAKE_AR AND NOT (Rust_CARGO_TARGET_ENV STREQUAL "msvc"))
