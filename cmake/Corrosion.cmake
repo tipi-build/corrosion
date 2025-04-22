@@ -904,7 +904,9 @@ function(_add_cargo_build out_cargo_build_out_dir)
 
     endfunction()
 
-    add_target_build_test(cargo-test_${target_name} _cargo-test_${target_name})
+    if (BUILD_TESTING)
+      add_target_build_test(cargo-test_${target_name} _cargo-test_${target_name})
+    endif()
 
     # Add custom target before actual build that user defined custom commands (e.g. code generators) can
     # use as a hook to do something before the build. This mainly exists to not expose the `_cargo-build` targets.
