@@ -549,6 +549,7 @@ set(_CORR_PROP_NO_DEFAULT_FEATURES CORROSION_NO_DEFAULT_FEATURES CACHE INTERNAL 
 set(_CORR_PROP_ENV_VARS CORROSION_ENVIRONMENT_VARIABLES CACHE INTERNAL "")
 set(_CORR_PROP_HOST_BUILD CORROSION_USE_HOST_BUILD CACHE INTERNAL "")
 
+
 # Add custom command to build one target in a package (crate)
 #
 # A target may be either a specific bin
@@ -586,6 +587,8 @@ function(_add_cargo_build out_cargo_build_out_dir)
         set(cargo_rustc_filter "--lib")
     elseif("bin" IN_LIST target_kinds)
         set(cargo_rustc_filter "--bin=${target_name}")
+    elseif("test" IN_LIST target_kinds)
+        set(cargo_rustc_filter "--test=${target_name}")
     else()
         message(FATAL_ERROR "TARGET_KINDS contained unknown kind `${target_kind}`")
     endif()
@@ -703,6 +706,47 @@ function(_add_cargo_build out_cargo_build_out_dir)
     if(CMAKE_CXX_COMPILER)
         list(APPEND corrosion_cc_rs_flags "CXX_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_COMPILER}")
     endif()
+
+    # Let CMake Drive via CXXFLAGS, CFLAGS and -Clink-args= the linking flags like -fPIC and others
+    list(APPEND corrosion_cc_rs_flags "CRATE_CC_NO_DEFAULTS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=ON")
+ 
+    # forward linker flags to allow use of custom linker and custom options
+    set (corrosion_link_args "${corrosion_link_args} ${CMAKE_EXE_LINKER_FLAGS}")
+
+    # treat CMAKE_POSITION_INDEPENDENT_CODE properly if set
+    if (NOT CMAKE_POSITION_INDEPENDENT_CODE)
+      list(APPEND corrosion_cc_rs_flags "CFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_C_FLAGS}")
+      list(APPEND corrosion_cc_rs_flags "CXXFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_FLAGS}")
+    else()
+      list(APPEND corrosion_cc_rs_flags "CFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_C_FLAGS} ${CMAKE_C_COMPILE_OPTIONS_PIC}")
+      list(APPEND corrosion_cc_rs_flags "CXXFLAGS_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_COMPILE_OPTIONS_PIC}")
+      
+      # Linkage phase args ( rust uses the compiler as linker driver)
+      set (corrosion_link_args "${corrosion_link_args}  ${CMAKE_CXX_COMPILE_OPTIONS_PIC}")
+      if(("bin" IN_LIST target_kinds) OR ("test" IN_LIST target_kinds))
+        set (corrosion_link_args "${corrosion_link_args}  ${CMAKE_CXX_COMPILE_OPTIONS_PIE}")
+      endif()
+    endif()
+
+
+    # stdlib
+    string(REGEX MATCHALL "-stdlib=([^ ]+)" custom_stdlibs_matches "${CMAKE_CXX_FLAGS}")
+    list(POP_BACK custom_stdlibs_matches custom_stdlib_defined)
+    if (NOT custom_stdlib_defined STREQUAL "")
+      # For rustc to link the right cpp stdlib, we need to strip the lib prefix
+      string(REPLACE "-stdlib=lib" "" custom_stdlib_defined_value "${custom_stdlib_defined}")
+      # We need to set the CXXSTDLIB to empty, so that rust/cc-rs doesn't try to do smart things about C++
+      # It forces a dynamic linking of libc++ in the context of clang 13 otherwise.
+      list(APPEND corrosion_cc_rs_flags "CXXSTDLIB_${_CORROSION_RUST_CARGO_TARGET_UNDERSCORE}=")
+
+      # When using pure c++ cmake build we don't need to transmit the 
+      # stdlib to the CMAKE_EXE_LINKER_FLAGS for rust we need because
+      # the flags are given to the compiler, that is used to drive the linker.
+      set (corrosion_link_args "${corrosion_link_args} ${custom_stdlib_defined}")
+    endif()
+
+   
+
     # cc-rs doesn't seem to support `llvm-ar` (commandline syntax), wo we might as well just use
     # the default AR.
     if(CMAKE_AR AND NOT (Rust_CARGO_TARGET_ENV STREQUAL "msvc"))
@@ -807,6 +851,62 @@ function(_add_cargo_build out_cargo_build_out_dir)
         ALL
     )
     add_dependencies(cargo-build_${target_name} _cargo-build_${target_name})
+
+    function(add_target_build_test TEST_NAME CUSTOM_TEST_TARGET_NAME)
+        get_property(IS_MULTI_CONFIG_GENERATOR GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+        set(CONFIG_PARAM)
+        if(IS_MULTI_CONFIG_GENERATOR)
+            set(CONFIG_PARAM --config $<CONFIG>)
+        endif()
+
+        add_custom_target(
+            ${CUSTOM_TEST_TARGET_NAME}
+            # Build crate
+            COMMAND 
+                ${CMAKE_COMMAND} -E env
+                "${build_env_variable_genex}"
+                "${global_rustflags_genex}"
+                "${cargo_target_linker}"
+                "${corrosion_cc_rs_flags}"
+                "${cargo_library_path}"
+                "CORROSION_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+                "CARGO_BUILD_RUSTC=${_CORROSION_RUSTC}"
+            "${cargo_bin}"
+                test
+                ${cargo_rustc_filter}
+                ${_CORROSION_VERBOSE_OUTPUT_FLAG}
+                ${all_features_arg}
+                ${no_default_features_arg}
+                ${features_genex}
+                --package ${package_name}
+                --manifest-path "${path_to_toml}"
+                --target-dir "${cargo_target_dir}"
+                ${cargo_profile}
+                ${flags_genex}
+                # Any arguments to cargo must be placed before this line
+                #${local_rustflags_delimiter}
+                #${local_rustflags_genex}
+
+                # Note: `BYPRODUCTS` may not contain **target specific** generator expressions.
+                # This means we cannot use `${cargo_build_dir}`, since it currently uses `$<TARGET_PROPERTY>`
+                # to determine the correct target directory, depending on if the hostbuild target property is
+                # set or not.
+                # BYPRODUCTS  "${cargo_build_dir}/${build_byproducts}"
+                # The build is conducted in the directory of the Manifest, so that configuration files such as
+                # `.cargo/config.toml` or `toolchain.toml` are applied as expected.
+                WORKING_DIRECTORY "${workspace_toml_dir}"
+                USES_TERMINAL
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+        )
+
+        add_test(NAME ${TEST_NAME} COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} ${CONFIG_PARAM} --target ${CUSTOM_TEST_TARGET_NAME})
+
+    endfunction()
+
+    if (BUILD_TESTING)
+      add_target_build_test(cargo-test_${target_name} _cargo-test_${target_name})
+    endif()
 
     # Add custom target before actual build that user defined custom commands (e.g. code generators) can
     # use as a hook to do something before the build. This mainly exists to not expose the `_cargo-build` targets.

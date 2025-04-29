@@ -160,7 +160,7 @@ function(_generator_add_package_targets)
             list(APPEND corrosion_targets ${target_name})
             set_property(TARGET "${target_name}" PROPERTY COR_CARGO_PACKAGE_NAME "${package_name}" )
         # Note: "bin" is mutually exclusive with "staticlib/cdylib", since `bin`s are seperate crates from libraries.
-        elseif("bin" IN_LIST kinds)
+        elseif("bin" IN_LIST kinds )
             set(bin_byproduct "")
             set(pdb_byproduct "")
             add_executable(${target_name} IMPORTED GLOBAL)
@@ -194,8 +194,35 @@ function(_generator_add_package_targets)
             endif()
             list(APPEND corrosion_targets ${target_name})
             set_property(TARGET "${target_name}" PROPERTY COR_CARGO_PACKAGE_NAME "${package_name}" )
+        elseif("test" IN_LIST kinds)
+            # tests, namely integration tests, unit tests are directly within lib and bin
+            set(bin_byproduct "")
+            set(pdb_byproduct "")
+            add_executable(${target_name} IMPORTED GLOBAL)
+            _corrosion_initialize_properties(${target_name})
+            _corrosion_add_bin_target("${workspace_manifest_path}" "${target_name}"
+                "bin_byproduct" "pdb_byproduct"
+            )
+
+            set(byproducts "")
+            list(APPEND byproducts "${bin_byproduct}" "${pdb_byproduct}")
+
+            set(cargo_build_out_dir "")
+            _add_cargo_build(
+                cargo_build_out_dir
+                PACKAGE "${package_name}"
+                TARGET "${target_name}"
+                MANIFEST_PATH "${manifest_path}"
+                WORKSPACE_MANIFEST_PATH "${workspace_manifest_path}"
+                TARGET_KINDS "test"
+                BYPRODUCTS "${byproducts}"
+                # Optional
+                ${no_linker_override}
+            )
+            list(APPEND corrosion_targets ${target_name})
+            set_property(TARGET "${target_name}" PROPERTY INTERFACE_COR_CARGO_PACKAGE_NAME "${package_name}" )
         else()
-            # ignore other kinds (like examples, tests, build scripts, ...)
+            # ignore other kinds (like examples,  build scripts, ...)
         endif()
     endforeach()
 
